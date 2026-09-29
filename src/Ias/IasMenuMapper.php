@@ -2,18 +2,14 @@
 
 namespace Sd1\IamSso\Ias;
 
+use Illuminate\Support\Collection;
 use Sd1\IamSso\Access\PermissionSet;
 use stdClass;
 
-/**
- * Permission MENU dari IAM -> bentuk baris lama AccessController::getListMenu() IAS
- * (stdClass acc_id, acc_group, acc_subgroup1..3, acc_name, acc_url), untuk Session('menu')
- * dan navbar.blade.php yang tidak diubah.
- */
 class IasMenuMapper
 {
-    /** @return stdClass[] */
-    public function toLegacyMenu(PermissionSet $permissions): array
+    /** @return Collection|stdClass[] */
+    public function toLegacyMenu(PermissionSet $permissions): Collection
     {
         $rows = [];
         foreach ($permissions->menus() as $p) {
@@ -31,7 +27,7 @@ class IasMenuMapper
             $rows[] = $row;
         }
 
-        return $rows;
+        return new Collection($rows);
     }
 
     private function val(array $p, string $key)
