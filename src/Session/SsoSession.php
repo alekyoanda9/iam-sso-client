@@ -11,6 +11,7 @@ use Illuminate\Contracts\Session\Session;
  *   access      : payload /api/me/access
  *   checked_at  : unix waktu cek versi terakhir
  *   branch_type : tipe cabang aktif (bisa diganti setelah user HO memilih cabang)
+ *   branch      : konteks cabang + koneksi dari IAM (terenkripsi, lihat SsoManager::branch())
  *   states      : state OAuth yang menunggu callback
  */
 class SsoSession

@@ -7,12 +7,15 @@ use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use Sd1\IamSso\Branch\BranchConnectionRegistrar;
 use Sd1\IamSso\Contracts\LoginHook;
+use Sd1\IamSso\Exceptions\SsoException;
 use Sd1\IamSso\SsoManager;
 
 /**
  * GET  /sso/login     -> redirect ke IAM /oauth/authorize (dengan state)
- * GET  /sso/callback  -> validasi state, tukar code, verifikasi JWT, ambil hak akses, panggil hook
+ * GET  /sso/callback  -> validasi state, tukar code, verifikasi JWT, ambil hak akses,
+ *                        ambil konteks cabang (iam_ctx, login multi-cabang), panggil hook
  * GET|POST /sso/logout -> hook onLogout, hapus sesi lokal, redirect ke logout IAM
  * GET  /sso/error     -> halaman pesan kegagalan login
  */
@@ -32,7 +35,7 @@ class SsoController extends Controller
         ]));
     }
 
-    public function callback(Request $request, SsoManager $sso, LoginHook $hook)
+    public function callback(Request $request, SsoManager $sso, LoginHook $hook, BranchConnectionRegistrar $registrar)
     {
         if ($request->query('error')) {
             return $this->fail($request, 'Login SSO dibatalkan: ' . $request->query('error_description', $request->query('error')));
@@ -48,16 +51,19 @@ class SsoController extends Controller
 
         try {
             $tokens = $sso->client()->exchangeCode($code, $this->redirectUri($sso));
-            $user = $sso->completeLogin($tokens);
+            $ctx = $request->query('iam_ctx');
+            $user = $sso->completeLogin($tokens, is_string($ctx) ? $ctx : null);
         } catch (Exception $e) {
             Log::warning('[sso] callback gagal: ' . $e->getMessage());
 
-            return $this->fail($request, $e->getCode() === 403
+            // SsoException murni = pesan yang memang untuk user (mis. pilihan cabang ditolak IAM).
+            return $this->fail($request, get_class($e) === SsoException::class ? $e->getMessage() : ($e->getCode() === 403
                 ? 'Akun Anda belum memiliki akses ke aplikasi ini.'
-                : 'Login SSO gagal: ' . $e->getMessage());
+                : 'Login SSO gagal: ' . $e->getMessage()));
         }
 
         $request->session()->regenerate();
+        $registrar->register($sso->branch());
 
         $response = $hook->onLogin($user, $sso->permissions(), $request);
         if ($response) {
@@ -67,8 +73,10 @@ class SsoController extends Controller
         return redirect()->intended($sso->config('home', '/'));
     }
 
-    public function logout(Request $request, SsoManager $sso, LoginHook $hook)
+    public function logout(Request $request, SsoManager $sso, LoginHook $hook, BranchConnectionRegistrar $registrar)
     {
+        // Hook logout biasanya menulis ke DB cabang (mis. IAS mengosongkan useraktif).
+        $registrar->register($sso->branch());
         $hook->onLogout($request);
         $sso->forget();
         $request->session()->invalidate();

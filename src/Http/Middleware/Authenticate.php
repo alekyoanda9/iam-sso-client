@@ -4,6 +4,7 @@ namespace Sd1\IamSso\Http\Middleware;
 
 use Closure;
 use Illuminate\Http\Request;
+use Sd1\IamSso\Branch\BranchConnectionRegistrar;
 use Sd1\IamSso\Contracts\LoginHook;
 use Sd1\IamSso\SsoManager;
 
@@ -13,6 +14,7 @@ use Sd1\IamSso\SsoManager;
  *  - Sudah login     -> cek perm_version ke IAM (maks. sekali per version_check_seconds):
  *      berubah          -> sesi diperbarui + hook onAccessRefreshed
  *      user nonaktif / token tak bisa diperbarui -> hook onLogout, sesi dihapus, login ulang
+ *  - Login multi-cabang: koneksi DB cabang terpilih didaftarkan setiap request.
  */
 class Authenticate
 {
@@ -22,10 +24,14 @@ class Authenticate
     /** @var LoginHook */
     private $hook;
 
-    public function __construct(SsoManager $sso, LoginHook $hook)
+    /** @var BranchConnectionRegistrar */
+    private $registrar;
+
+    public function __construct(SsoManager $sso, LoginHook $hook, BranchConnectionRegistrar $registrar)
     {
         $this->sso = $sso;
         $this->hook = $hook;
+        $this->registrar = $registrar;
     }
 
     public function handle(Request $request, Closure $next)
@@ -33,6 +39,9 @@ class Authenticate
         if (! $this->sso->check()) {
             return $this->toLogin($request, null);
         }
+
+        // Sebelum hook apa pun: hook/aplikasi boleh langsung memakai koneksi cabang.
+        $this->registrar->register($this->sso->branch());
 
         $status = $this->sso->refreshIfStale();
 

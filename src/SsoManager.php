@@ -2,9 +2,11 @@
 
 namespace Sd1\IamSso;
 
+use Illuminate\Contracts\Encryption\Encrypter;
 use Illuminate\Contracts\Session\Session;
 use Illuminate\Support\Facades\Log;
 use Sd1\IamSso\Access\PermissionSet;
+use Sd1\IamSso\Branch\BranchContext;
 use Sd1\IamSso\Exceptions\IamRequestException;
 use Sd1\IamSso\Exceptions\IamUnavailableException;
 use Sd1\IamSso\Exceptions\InvalidTokenException;
@@ -22,6 +24,8 @@ use Sd1\IamSso\Session\SsoSession;
  *   Sso::canUrl('/bo/..')  boleh buka URL? (semantik isAccessible IAS)
  *   Sso::menus()           permission MENU terurut
  *   Sso::setBranchType()   tipe cabang aktif (user HO setelah memilih cabang)
+ *   Sso::branch()          BranchContext|null: cabang + koneksi pilihan user (login multi-cabang)
+ *   Sso::connectionName()  nama koneksi DB Laravel untuk cabang terpilih
  */
 class SsoManager
 {
@@ -46,12 +50,19 @@ class SsoManager
     /** @var PermissionSet|null */
     private $permissionCache;
 
-    public function __construct(IamClient $client, JwtVerifier $verifier, Session $session, array $config)
+    /** @var Encrypter|null */
+    private $encrypter;
+
+    /** @var BranchContext|null|false  false = belum dibaca */
+    private $branchCache = false;
+
+    public function __construct(IamClient $client, JwtVerifier $verifier, Session $session, array $config, ?Encrypter $encrypter = null)
     {
         $this->client = $client;
         $this->verifier = $verifier;
         $this->laravelSession = $session;
         $this->config = $config;
+        $this->encrypter = $encrypter;
     }
 
     public function session(): SsoSession
@@ -132,6 +143,38 @@ class SsoManager
         return isset($access['perm_version']) ? $access['perm_version'] : null;
     }
 
+    /**
+     * Cabang + koneksi yang dipilih user di halaman login IAM, atau null
+     * (client tanpa login multi-cabang). Disimpan terenkripsi di sesi karena berisi password DB.
+     *
+     * @return BranchContext|null
+     */
+    public function branch()
+    {
+        if ($this->branchCache !== false) {
+            return $this->branchCache;
+        }
+        $stored = $this->session()->get('branch');
+        $data = null;
+        if (is_string($stored) && $stored !== '') {
+            try {
+                $data = json_decode($this->encrypter()->decryptString($stored), true);
+            } catch (\Exception $e) {
+                Log::warning('[sso] konteks cabang di sesi tidak bisa dibaca: ' . $e->getMessage());
+            }
+        }
+
+        return $this->branchCache = is_array($data) ? new BranchContext($data) : null;
+    }
+
+    /** Nama koneksi DB Laravel cabang terpilih (config sso.branch.connection_name), atau null. */
+    public function connectionName()
+    {
+        $branch = $this->branch();
+
+        return $branch ? app(\Sd1\IamSso\Branch\BranchConnectionRegistrar::class)->name($branch) : null;
+    }
+
     /** Tipe cabang aktif: pilihan eksplisit (user HO) atau tipe cabang user. */
     public function activeBranchType()
     {
@@ -163,7 +206,7 @@ class SsoManager
      *
      * @throws SsoException
      */
-    public function completeLogin(array $tokenResponse): SsoUser
+    public function completeLogin(array $tokenResponse, ?string $branchContextToken = null): SsoUser
     {
         if (empty($tokenResponse['access_token'])) {
             throw new SsoException('IAM tidak mengembalikan access token.');
@@ -171,6 +214,7 @@ class SsoManager
         $tokens = $this->normalizeTokens($tokenResponse, []);
         $claims = $this->fetchClaims($tokens['access_token']);
         $access = $this->client->access($tokens['access_token']);
+        $branch = $this->fetchBranch($tokens['access_token'], $branchContextToken);
 
         $this->session()->clear();
         $this->session()->put([
@@ -179,11 +223,49 @@ class SsoManager
             'access' => $access,
             'checked_at' => time(),
             'logged_in_at' => time(),
-            'branch_type' => null,
+            // Menu difilter sesuai tipe cabang yang dimasuki (bukan cabang asal user HO).
+            'branch_type' => $branch ? $branch->type() : null,
+            'branch' => $branch ? $this->encrypter()->encryptString(json_encode($branch->toArray())) : null,
         ]);
         $this->permissionCache = null;
+        $this->branchCache = $branch;
 
         return new SsoUser($claims);
+    }
+
+    /**
+     * Konteks cabang dari IAM (login multi-cabang).
+     *
+     * @throws SsoException
+     */
+    private function fetchBranch(string $accessToken, ?string $ctx)
+    {
+        $required = ! empty($this->config['branch']['enabled']);
+        if ($ctx === null || $ctx === '') {
+            if ($required) {
+                throw new SsoException('IAM tidak mengirim pilihan cabang. Pastikan client ini ber-flag "Login multi-cabang" di IAM (App Management).');
+            }
+
+            return null;
+        }
+
+        try {
+            $data = $this->client->branchContext($accessToken, $ctx);
+        } catch (IamUnavailableException $e) {
+            throw $e;
+        } catch (IamRequestException $e) {
+            throw new SsoException('Pilihan cabang ditolak IAM: ' . $e->getMessage());
+        }
+        if (! BranchContext::isValidPayload($data)) {
+            throw new SsoException('Konteks cabang dari IAM tidak lengkap.');
+        }
+
+        return new BranchContext($data);
+    }
+
+    private function encrypter(): Encrypter
+    {
+        return $this->encrypter ?: app('encrypter');
     }
 
     /**
@@ -262,6 +344,7 @@ class SsoManager
     {
         $this->session()->clear();
         $this->permissionCache = null;
+        $this->branchCache = false;
     }
 
     public function config(string $key, $default = null)

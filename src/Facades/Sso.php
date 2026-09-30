@@ -19,6 +19,8 @@ use Illuminate\Support\Facades\Facade;
  * @method static string|null permVersion()
  * @method static string refreshIfStale(bool $force = false)
  * @method static void forget()
+ * @method static \Sd1\IamSso\Branch\BranchContext|null branch()
+ * @method static string|null connectionName()
  *
  * @see \Sd1\IamSso\SsoManager
  */

@@ -73,6 +73,27 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Login multi-cabang (client ber-flag "Login multi-cabang" di IAM)
+    |--------------------------------------------------------------------------
+    | User memilih cabang + koneksi (PRODUCTION/SIMULASI) di halaman login IAM. SDK mengambil
+    | detail koneksi DB cabang itu dari IAM dan mendaftarkannya sebagai koneksi Laravel setiap
+    | request (middleware sso.auth / sso.branch). Aplikasi tidak perlu tahu webservice/daftar cabang.
+    |
+    | enabled            : true -> login DITOLAK bila IAM tidak mengirim pilihan cabang
+    |                      (pengaman salah konfigurasi). Client 1 DB: biarkan false.
+    | connection_name    : nama koneksi DB, atau class Sd1\IamSso\Contracts\ConnectionNamer
+    |                      (IAS: Sd1\IamSso\Ias\IasConnectionNamer -> igrjkt/simjkt/spibks).
+    |                      Pakai: DB::connection(Sso::connectionName()).
+    | connection_options : tambahan config koneksi (mis. ['sslmode' => 'prefer']).
+    */
+    'branch' => [
+        'enabled' => (bool) env('SSO_BRANCH_LOGIN', false),
+        'connection_name' => env('SSO_BRANCH_CONNECTION', 'sso_branch'),
+        'connection_options' => [],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Hook aplikasi (implementasi Sd1\IamSso\Contracts\LoginHook)
     |--------------------------------------------------------------------------
     | Tempat aplikasi mengisi sesi lamanya (mis. adapter sesi IAS), memilih cabang, dsb.

@@ -49,9 +49,8 @@ class IasAdapterTest extends TestCase
         $this->assertSame('SJM', $session->get('usertype'));
         $this->assertSame([], $session->get('specialUser'));
         $menu = $session->get('menu');
-        $this->assertSame(['FO005', 'BO027'], array_map(function ($m) {
-            return $m->acc_id;
-        }, $menu), 'ACTION tidak masuk menu');
+        // Sejak 3280da8 menu berupa Collection (sama dengan hasil query lama IAS).
+        $this->assertSame(['FO005', 'BO027'], collect($menu)->pluck('acc_id')->all(), 'ACTION tidak masuk menu');
         $this->assertSame('Laporan Kasir', $menu[0]->acc_subgroup1);
         $this->assertNull($menu[0]->acc_subgroup2);
         $this->assertSame('XXX', IasSessionWriter::userType('maya@x.id'));

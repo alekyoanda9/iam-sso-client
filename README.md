@@ -87,12 +87,33 @@ Route bawaan (prefix `sso`, middleware `web`):
 - **Access token kedaluwarsa:** diperbarui otomatis dengan refresh token. Kalau gagal, user diarahkan ke login ulang.
 - **IAM tidak bisa dihubungi saat pengecekan:** dengan `fail_open=true` (default), hak akses terakhir di sesi tetap dipakai dan pengecekan dicoba lagi sekitar 15 detik kemudian. Login baru tetap butuh IAM.
 
+### Login multi-cabang (aplikasi yang terhubung ke DB tiap cabang)
+Untuk aplikasi seperti IAS, pilihan **cabang + koneksi (PRODUCTION/SIMULASI)** ada di halaman login IAM, bukan di aplikasi. Aplikasi tidak perlu tahu webservice `GetConnectionPGDetail`, kunci AES, atau daftar cabang.
+
+1. Di IAM (App Management), centang **Login multi-cabang** untuk client ini dan pilih koneksi yang boleh dipakai.
+2. Di aplikasi:
+   ```
+   SSO_BRANCH_LOGIN=true            # tolak login bila IAM tidak mengirim pilihan cabang
+   SSO_BRANCH_CONNECTION=sso_branch # nama koneksi DB, atau class ConnectionNamer
+   ```
+3. Pakai koneksinya:
+   ```php
+   DB::connection(Sso::connectionName())->table('tbmaster_perusahaan')->first();
+   $b = Sso::branch();   // code(), name(), type(), kode(), env(), isProduction(), connection(), host('SIMULASI')
+   ```
+
+Alurnya: IAM menambahkan `iam_ctx` di redirect callback → `/sso/callback` menukarnya di `GET /api/me/branch-context` (sekali pakai, dengan access token user) → konteks disimpan **terenkripsi** di sesi → koneksi `database.connections.{nama}` didaftarkan setiap request oleh `sso.auth` (atau `sso.branch` untuk route yang tidak lewat `sso.auth`). Menu otomatis difilter sesuai tipe cabang yang dimasuki.
+
+Aturan cabang ditegakkan IAM: user cabang selalu masuk ke cabangnya sendiri; user Head Office memilih cabang mana pun; bila aplikasi diakses lewat server cabang (redirect URI = server cabang), cabang dikunci ke cabang server itu.
+
+Aplikasi biasa yang memakai satu DB tidak perlu mengubah apa pun (`SSO_BRANCH_LOGIN=false`, `Sso::branch()` = `null`).
+
 ## 4. Hook aplikasi
 Implementasikan `Sd1\IamSso\Contracts\LoginHook` dan daftarkan di `config('sso.hook')`:
 
 | Method | Kapan dipanggil |
 |---|---|
-| `onLogin($user, $permissions, $request)` | Sekali setelah login. Kembalikan Response untuk, misalnya, redirect ke halaman pilih cabang. |
+| `onLogin($user, $permissions, $request)` | Sekali setelah login. `Sso::branch()` dan koneksi cabang sudah siap dipakai. Kembalikan Response untuk mengganti tujuan redirect. |
 | `onAccessRefreshed(...)` | Saat `perm_version` berubah. Kembalikan Response untuk menghentikan request, misalnya paksa logout bila cabang user berubah. |
 | `onLogout($request)` | Sebelum sesi dihapus. |
 
@@ -110,7 +131,12 @@ Implementasikan `Sd1\IamSso\Contracts\LoginHook` dan daftarkan di `config('sso.h
 | `menu` | bentuk `acc_*` untuk `navbar.blade.php` |
 | `specialUser` | `[]` |
 
-Kunci cabang/koneksi (`kdigr`, `connection`, dst.) diisi alur pilih cabang di IAS.
+**`IasBranchSessionWriter::write($session, Sso::branch(), Sso::connectionName())`** mengisi kunci cabang/koneksi lama dari konteks cabang IAM:
+`connection`, `phpIP`, `namacabang`, `kode`, `kodeigr`, `dbHostProd`, `dbHostSim`, `dbPort`, `dbPass`.
+
+**`IasConnectionNamer`** (`SSO_BRANCH_CONNECTION='Sd1\IamSso\Ias\IasConnectionNamer'` — kutip tunggal di `.env`, atau isi langsung di `config/sso.php`) menamai koneksi persis seperti login lama: `igrjkt`, `simjkt`, `spibks` (SPI/ICM + PRODUCTION = kode saja), `simspibks`.
+
+> `dbPass` = password koneksi **terpilih**. Login lama selalu menyimpan password PRODUCTION walau memilih SIMULASI; IAM tidak mengirim password koneksi yang tidak dipilih.
 
 **`IasMenuMapper`** mengubah permission MENU menjadi `stdClass` `acc_id`, `acc_group`, `acc_subgroup1..3`, `acc_name`, `acc_url`.
 

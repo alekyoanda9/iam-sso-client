@@ -67,6 +67,18 @@ class IamClient
         return $this->send('GET', '/api/me/access', ['headers' => $this->bearer($accessToken)]);
     }
 
+    /**
+     * GET /api/me/branch-context?ctx= -> cabang + koneksi pilihan user (login multi-cabang).
+     * ctx = parameter iam_ctx di redirect callback. Sekali pakai.
+     */
+    public function branchContext(string $accessToken, string $ctx): array
+    {
+        return $this->send('GET', '/api/me/branch-context', [
+            'headers' => $this->bearer($accessToken),
+            'query' => ['ctx' => $ctx],
+        ]);
+    }
+
     /** GET /api/me/access/version -> {perm_version, active}. */
     public function accessVersion(string $accessToken): array
     {
@@ -130,7 +142,8 @@ class IamClient
         $json = json_decode((string) $response->getBody(), true);
 
         if ($status >= 500) {
-            throw new IamUnavailableException('IAM error ' . $status . ' pada ' . $path, $status, $json);
+            $detail = is_array($json) && ! empty($json['message']) ? ': ' . $json['message'] : '';
+            throw new IamUnavailableException('IAM error ' . $status . ' pada ' . $path . $detail, $status, $json);
         }
         if ($status >= 400) {
             $message = is_array($json) ? (isset($json['message']) ? $json['message'] : (isset($json['error_description']) ? $json['error_description'] : null)) : null;

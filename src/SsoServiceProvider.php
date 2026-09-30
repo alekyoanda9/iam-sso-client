@@ -11,6 +11,7 @@ use Sd1\IamSso\Contracts\LoginHook;
 use Sd1\IamSso\Http\IamClient;
 use Sd1\IamSso\Http\Middleware\Authenticate;
 use Sd1\IamSso\Http\Middleware\Authorize;
+use Sd1\IamSso\Http\Middleware\RegisterBranchConnection;
 use Sd1\IamSso\Ias\Console\MirrorUsersCommand;
 use Sd1\IamSso\Jwt\JwtVerifier;
 use Sd1\IamSso\Jwt\PublicKeyProvider;
@@ -47,7 +48,8 @@ class SsoServiceProvider extends ServiceProvider
                 $app->make(IamClient::class),
                 $app->make(JwtVerifier::class),
                 $app['session.store'],
-                $app['config']->get('sso')
+                $app['config']->get('sso'),
+                $app['encrypter']
             );
         });
         $this->app->alias(SsoManager::class, 'sso');
@@ -70,6 +72,7 @@ class SsoServiceProvider extends ServiceProvider
         $router = $this->app['router'];
         $router->aliasMiddleware('sso.auth', Authenticate::class);
         $router->aliasMiddleware('sso.can', Authorize::class);
+        $router->aliasMiddleware('sso.branch', RegisterBranchConnection::class);
 
         // @ssocan('BO190') ... @endssocan
         Blade::if('ssocan', function ($code) {
