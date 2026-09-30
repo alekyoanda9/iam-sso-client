@@ -12,6 +12,10 @@ return [
     | redirect_uri  : kosongkan -> otomatis route('sso.callback') di host yang sedang diakses.
     |                 URL ini HARUS persis terdaftar di IAM (iam:client-redirects).
     */
+    // false -> /sso/login & /sso/callback menolak (mis. server masih memakai login lama).
+    'enabled' => (bool) env('SSO_ENABLED', true),
+    'disabled_redirect' => null, // null = url('/login')
+
     'base_url' => env('SSO_BASE_URL'),
     'client_id' => env('SSO_CLIENT_ID'),
     'client_secret' => env('SSO_CLIENT_SECRET'),
@@ -89,14 +93,19 @@ return [
     |
     | enabled            : true -> login DITOLAK bila IAM tidak mengirim pilihan cabang
     |                      (pengaman salah konfigurasi). Client 1 DB: biarkan false.
-    | connection_name    : nama koneksi DB, atau class Sd1\IamSso\Contracts\ConnectionNamer
-    |                      (IAS: Sd1\IamSso\Ias\IasConnectionNamer -> igrjkt/simjkt/spibks).
+    | connection_name    : nama tetap ('sso_branch'), pola ('{env_prefix}{kode}'), atau class
+    |                      Sd1\IamSso\Contracts\ConnectionNamer.
+    | env_prefixes       : [ENV => awalan] untuk {env_prefix}, mis. [PRODUCTION => igr, SIMULASI => sim]
+    | connection_name_overrides : pola khusus per 'ENV:TIPE' atau 'ENV', mis. ['PRODUCTION:SPI' => '{kode}']
     |                      Pakai: DB::connection(Sso::connectionName()).
     | connection_options : tambahan config koneksi (mis. ['sslmode' => 'prefer']).
     */
     'branch' => [
         'enabled' => (bool) env('SSO_BRANCH_LOGIN', false),
         'connection_name' => env('SSO_BRANCH_CONNECTION', 'sso_branch'),
+        // Dipakai bila connection_name berupa pola ({kode} {code} {type} {env} {env_prefix}).
+        'env_prefixes' => [],
+        'connection_name_overrides' => [],
         'connection_options' => [],
     ],
 
@@ -106,7 +115,7 @@ return [
     |--------------------------------------------------------------------------
     | Tempat aplikasi mengisi sesi lamanya (mis. adapter sesi IAS), memilih cabang, dsb.
     */
-    'hook' => Sd1\IamSso\Support\NullLoginHook::class,
+    'hook' => Sd1\IamSso\Bridge\BridgeLoginHook::class,
 
     /*
     |--------------------------------------------------------------------------
@@ -115,23 +124,80 @@ return [
     | source : class implementasi Sd1\IamSso\Contracts\PermissionCatalogSource
     */
     'permission_push' => [
-        'source' => null,
+        // Sumber bawaan: satu tabel menu aplikasi (Sd1\IamSso\Catalog\TableCatalogSource).
+        // Boleh diganti class sendiri yang mengimplementasikan PermissionCatalogSource.
+        'source' => Sd1\IamSso\Catalog\TableCatalogSource::class,
+        'table' => null,
+        'connection' => null,
+        // [field IAM => kolom tabel]: code (wajib), name, url, group, subgroup1..3, order, level
+        'columns' => [],
+        'type' => 'MENU',
+        'active_column' => null,
+        'active_value' => '1',
+        'modified_columns' => [],
+        'excluded_urls' => [],
+        'excluded_groups' => [],
     ],
 
     /*
     |--------------------------------------------------------------------------
-    | Khusus adapter IAS (Sd1\IamSso\Ias\*)
+    | Bridge sesi lama (untuk aplikasi existing) - dipakai hook bawaan BridgeLoginHook
     |--------------------------------------------------------------------------
+    | Mengisi kunci sesi yang dipakai kode lama aplikasi dari hasil SSO, tanpa menulis kelas.
+    | Nilai berupa "spec" (lihat Sd1\IamSso\Bridge\ValueResolver):
+    |   user.<klaim>  branch.<field>  request.ip|host  session.<kunci>  row.<kolom>
+    |   value:teks  ['value' => apa saja]  now  template:teks {spec}
+    |   + transform setelah '|': upper lower trim ucfirst string int empty_null strip:X max:N
+    |     substr:S,L default:X prefix:A=B,*=C
+    |
+    | session   : [kunci sesi => spec]
+    | menu      : ['key' => 'menu', 'fields' => [kolom lama => field permission],
+    |              'require_url' => true, 'format' => collection|objects|arrays]
+    |              field permission: code name url group subgroup1 subgroup2 subgroup3 order level
+    | required  : [spec => pesan]  login dibatalkan bila nilainya kosong
+    | queries   : [['sql' => 'select ...', 'bindings' => [nama => spec], 'into' => [kunci sesi => 'row.kolom'],
+    |               'required' => bool, 'error' => 'pesan {session.connection}', 'connection' => 'branch'|nama]]
+    | on_login  : [['sql' => 'update ...', 'bindings' => [...], 'required' => true]]
+    | on_logout : [['sql' => 'update ...', 'bindings' => [...], 'when' => [spec yang wajib terisi]]]
+    |             placeholder bernama (:nama) - tiap nama hanya dipakai SEKALI dalam satu SQL.
+    | forget    : kunci sesi tambahan yang dihapus saat login/logout
     */
-    'ias' => [
-        // Menu tbmaster_access_migrasi yang TIDAK dikirim ke IAM karena digantikan IAM:
-        // Master User (/administration/user) dan akses menu per user (/administration/access).
-        // Dicocokkan persis dengan acc_url. excluded_groups mengecualikan satu grup penuh (default kosong).
-        'excluded_urls' => ['/administration/user', '/administration/access'],
-        'excluded_groups' => [],
-        // Kode cabang untuk sso:mirror-users (mode cabang IAS memakai KODEIGR).
-        'branch' => env('KODEIGR'),
-        // Nilai create_by/modify_by saat mirror menulis tbmaster_user.
-        'mirror_actor' => 'SSO',
+    'bridge' => [
+        'enabled' => false,
+        'session' => [],
+        'menu' => null,
+        'required' => [],
+        'queries' => [],
+        'on_login' => [],
+        'on_logout' => [],
+        'forget' => [],
+        // User cabang yang dimutasi ke cabang lain saat sedang login -> paksa logout (butuh access_refresh).
+        'logout_on_branch_change' => true,
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Mirror user ke tabel user lokal (opsional)
+    |--------------------------------------------------------------------------
+    | Untuk aplikasi yang masih JOIN ke tabel user sendiri. Satu arah IAM -> tabel lokal;
+    | hanya kolom yang disebut di sini yang ditulis. Lihat Sd1\IamSso\Mirror\UserMirror.
+    | on_login          : mirror user yang login ke koneksi cabang terpilih
+    | login_branch_code : spec kode cabang saat mirror on_login (default branch.code)
+    | branch/connection : default untuk `php artisan sso:mirror-users`
+    */
+    'mirror' => [
+        'enabled' => false,
+        'on_login' => true,
+        'login_branch_code' => 'branch.code',
+        'branch' => env('SSO_MIRROR_BRANCH'),
+        'connection' => null,
+        'table' => null,
+        'key' => ['column' => 'id', 'value' => 'user.id', 'max' => null],
+        'columns' => [],
+        'columns_if_set' => [],
+        'when_active' => [],
+        'when_inactive' => [],
+        'on_insert' => [],
+        'on_update' => [],
     ],
 ];

@@ -54,9 +54,11 @@ abstract class TestCase extends BaseTestCase
             'sso.fail_open' => true,
             'sso.hook' => RecordingHook::class,
         ]);
-        // Pakai default paket untuk bagian IAS (aplikasi host bisa punya config/sso.php sendiri).
+        // Pakai default paket (aplikasi host bisa punya config/sso.php sendiri).
         $defaults = require __DIR__ . '/../config/sso.php';
-        config(['sso.ias' => $defaults['ias']]);
+        foreach (['enabled', 'disabled_redirect', 'access_refresh', 'branch', 'bridge', 'mirror', 'permission_push'] as $key) {
+            config(['sso.' . $key => $defaults[$key]]);
+        }
         RecordingHook::$calls = [];
         RecordingHook::$loginResponse = null;
         $this->mockIam([]);

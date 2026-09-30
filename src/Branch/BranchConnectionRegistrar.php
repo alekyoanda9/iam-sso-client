@@ -75,7 +75,30 @@ class BranchConnectionRegistrar
             }
         }
 
-        return (string) ($setting ?: 'sso_branch');
+        $setting = (string) ($setting ?: 'sso_branch');
+        if (strpos($setting, '{') === false) {
+            return $setting;
+        }
+
+        // Pola, mis. '{env_prefix}{kode}' + env_prefixes [PRODUCTION => igr, SIMULASI => sim]
+        // + connection_name_overrides ['PRODUCTION:SPI' => '{kode}'] (kunci ENV:TIPE atau ENV).
+        $overrides = (array) $this->config->get('sso.branch.connection_name_overrides', []);
+        $env = (string) $branch->env();
+        $type = (string) $branch->type();
+        if (isset($overrides[$env . ':' . $type])) {
+            $setting = (string) $overrides[$env . ':' . $type];
+        } elseif (isset($overrides[$env])) {
+            $setting = (string) $overrides[$env];
+        }
+        $prefixes = (array) $this->config->get('sso.branch.env_prefixes', []);
+
+        return strtr($setting, [
+            '{kode}' => (string) $branch->kode(),
+            '{code}' => (string) $branch->code(),
+            '{type}' => strtolower($type),
+            '{env}' => strtolower($env),
+            '{env_prefix}' => isset($prefixes[$env]) ? (string) $prefixes[$env] : strtolower($env),
+        ]);
     }
 
     public function connectionConfig(BranchContext $branch): array

@@ -23,6 +23,9 @@ class SsoController extends Controller
 {
     public function login(Request $request, SsoManager $sso)
     {
+        if ($disabled = $this->disabled($sso)) {
+            return $disabled;
+        }
         $state = Str::random(40);
         $sso->session()->pushState($state);
 
@@ -37,6 +40,9 @@ class SsoController extends Controller
 
     public function callback(Request $request, SsoManager $sso, LoginHook $hook, BranchConnectionRegistrar $registrar)
     {
+        if ($disabled = $this->disabled($sso)) {
+            return $disabled;
+        }
         if ($request->query('error')) {
             return $this->fail($request, 'Login SSO dibatalkan: ' . $request->query('error_description', $request->query('error')));
         }
@@ -95,6 +101,17 @@ class SsoController extends Controller
         return response()->view('sso::error', [
             'message' => $request->session()->get('sso_error', 'Login SSO gagal.'),
         ], 403);
+    }
+
+    /** SSO dimatikan di server ini (config sso.enabled=false) -> kembali ke halaman login aplikasi. */
+    private function disabled(SsoManager $sso)
+    {
+        if ($sso->config('enabled', true)) {
+            return null;
+        }
+
+        return redirect($sso->config('disabled_redirect') ?: url('/login'))
+            ->with('sso_message', 'Login SSO belum diaktifkan di server ini.');
     }
 
     private function redirectUri(SsoManager $sso): string

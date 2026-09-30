@@ -5,7 +5,8 @@ SDK Laravel untuk login SSO ke **SSO IAM** (OAuth2 authorization code + JWT RS25
 - PHP **7.1+**, Laravel **5.8 – 12**. Tanpa library tambahan selain Guzzle 6/7 (sudah ada di IAS).
 - JWT diverifikasi **lokal** dengan `openssl_verify`. Hanya RS256 yang diterima; `iss`, `aud`, `exp`, dan `nbf` ikut dicek.
 - Perubahan hak akses di IAM terbaca **tanpa logout**. Pengecekannya berjalan otomatis lewat `perm_version`, paling sering sekali per 60 detik.
-- Inti SDK (`Sd1\IamSso\*`) tidak tahu apa pun tentang IAS. Adapter IAS dipisah di `Sd1\IamSso\Ias\*`.
+- **Generik.** Tidak ada kode khusus aplikasi tertentu di SDK. Aplikasi existing (mis. IAS) disambungkan lewat **config** (`sso.bridge`, `sso.mirror`, `sso.permission_push`), tanpa menulis kelas; contoh lengkap IAS ada di [`examples/ias-sso.php`](examples/ias-sso.php).
+- **v2.0.0** menghapus `Sd1\IamSso\Ias\*` (lihat [Migrasi dari v1](#8-migrasi-dari-v1)).
 
 ## 1. Pemasangan
 
@@ -95,7 +96,7 @@ Untuk aplikasi seperti IAS, pilihan **cabang + koneksi (PRODUCTION/SIMULASI)** a
 2. Di aplikasi:
    ```
    SSO_BRANCH_LOGIN=true            # tolak login bila IAM tidak mengirim pilihan cabang
-   SSO_BRANCH_CONNECTION=sso_branch # nama koneksi DB, atau class ConnectionNamer
+   SSO_BRANCH_CONNECTION=sso_branch # nama tetap, atau pola di config: '{env_prefix}{kode}'
    ```
 3. Pakai koneksinya:
    ```php
@@ -109,56 +110,54 @@ Aturan cabang ditegakkan IAM: user cabang selalu masuk ke cabangnya sendiri; use
 
 Aplikasi biasa yang memakai satu DB tidak perlu mengubah apa pun (`SSO_BRANCH_LOGIN=false`, `Sso::branch()` = `null`).
 
-## 4. Hook aplikasi
-Implementasikan `Sd1\IamSso\Contracts\LoginHook` dan daftarkan di `config('sso.hook')`:
+## 4. Menyambungkan aplikasi existing tanpa menulis kode
+
+Aplikasi lama biasanya sudah punya kunci sesi sendiri (`Session::get('usid')`, `Session::get('menu')`, `DB::connection(Session::get('connection'))`, ...). Hook bawaan **`Sd1\IamSso\Bridge\BridgeLoginHook`** mengisi semuanya dari hasil SSO berdasarkan `config/sso.php`, jadi controller lama tidak perlu diubah.
+
+| Bagian config | Fungsi |
+|---|---|
+| `bridge.session` | `[kunci sesi => spec]`, mis. `'usid' => 'user.ias_user_code'`, `'connection' => 'branch.connection_name'`, `'id' => 'request.ip\|strip:.'` |
+| `bridge.menu` | Permission MENU → bentuk menu lama: `fields => [kolom lama => code/name/url/group/subgroup1..3/order/level]`, `format => collection\|objects\|arrays` |
+| `bridge.required` | `[spec => pesan]` — login dibatalkan dengan pesan itu bila nilainya kosong |
+| `bridge.queries` | `SELECT` satu baris dari DB cabang → kunci sesi (`into => [kunci => 'row.kolom']`), `required` + `error` bertemplate |
+| `bridge.on_login` / `on_logout` | Statement `UPDATE/INSERT` dengan binding bernama; `on_logout.when` = syarat |
+| `bridge.forget` | Kunci sesi lain yang dibersihkan saat login/logout |
+| `bridge.logout_on_branch_change` | User cabang yang dimutasi saat sedang login → logout (butuh `access_refresh`) |
+| `mirror` | Salin user IAM ke tabel user lokal (kolom yang disebut saja; password dsb. tidak disentuh) |
+| `permission_push` | Katalog menu dari satu tabel (`TableCatalogSource`) untuk `sso:permission-push` |
+| `branch.connection_name` | Nama tetap, atau pola `{env_prefix}{kode}` + `env_prefixes` + `connection_name_overrides` (`'PRODUCTION:SPI' => '{kode}'`) |
+| `enabled` | `false` → `/sso/login` menolak & kembali ke `/login` (mis. server masih mode login lama) |
+
+**Spec nilai** (`Sd1\IamSso\Bridge\ValueResolver`, aman untuk `config:cache`):
+
+| Sumber | Contoh |
+|---|---|
+| `user.*` | klaim JWT: `user.nik`, `user.ias_user_code`, `user.role_code`, `user.email` |
+| `branch.*` | `branch.code`, `branch.name`, `branch.kode`, `branch.type`, `branch.env`, `branch.connection_name`, `branch.connection.password`, `branch.hosts.PRODUCTION` |
+| `request.*` | `request.ip`, `request.host` |
+| `session.*` / `row.*` / `context.*` | kunci sesi, kolom hasil query, nilai tambahan (mis. `context.branch_code` di mirror) |
+| literal | `value:5432`, `['value' => []]`, `now`, `null`, `template:http://{request.host}:3050` |
+
+Transform setelah `|`, berurutan: `upper lower trim ucfirst string int empty_null strip:X max:N substr:S,L default:X prefix:SM=SM,SJM=SJM,*=XXX`.
+
+Contoh lengkap untuk Web IAS — menggantikan seluruh adapter IAS v1 dengan hasil yang sama (diuji di `tests/Feature/LegacyBridgeTest.php`): **[`examples/ias-sso.php`](examples/ias-sso.php)**.
+
+Butuh logika yang tidak bisa ditulis di config? Extend `BridgeLoginHook` (panggil `parent::`) atau implementasikan `Sd1\IamSso\Contracts\LoginHook` sendiri, lalu daftarkan di `sso.hook`:
 
 | Method | Kapan dipanggil |
 |---|---|
-| `onLogin($user, $permissions, $request)` | Sekali setelah login. `Sso::branch()` dan koneksi cabang sudah siap dipakai. Kembalikan Response untuk mengganti tujuan redirect. |
-| `onAccessRefreshed(...)` | Saat `perm_version` berubah. Kembalikan Response untuk menghentikan request, misalnya paksa logout bila cabang user berubah. |
+| `onLogin($user, $permissions, $request)` | Sekali setelah login. `Sso::branch()` dan koneksi cabang sudah siap. Kembalikan Response untuk mengganti tujuan redirect. |
+| `onAccessRefreshed(...)` | Saat `perm_version` berubah (`access_refresh = true`). Kembalikan Response untuk menghentikan request. |
 | `onLogout($request)` | Sebelum sesi dihapus. |
 
-## 5. Adapter IAS (`Sd1\IamSso\Ias`)
-
-**`IasSessionWriter::writeUser($session, $user, $perms)`** mengisi kunci sesi lama:
-
-| Kunci | Isi |
-|---|---|
-| `usid` | `ias_user_code` |
-| `un` | nama |
-| `eml` | email |
-| `userlevel` | `ias_userlevel` |
-| `usertype` | SM/SJM/XXX dari prefix email |
-| `menu` | bentuk `acc_*` untuk `navbar.blade.php` |
-| `specialUser` | `[]` |
-
-**`IasBranchSessionWriter::write($session, Sso::branch(), Sso::connectionName())`** mengisi kunci cabang/koneksi lama dari konteks cabang IAM:
-`connection`, `phpIP`, `namacabang`, `kode`, `kodeigr`, `dbHostProd`, `dbHostSim`, `dbPort`, `dbPass`.
-
-**`IasConnectionNamer`** (`SSO_BRANCH_CONNECTION='Sd1\IamSso\Ias\IasConnectionNamer'` — kutip tunggal di `.env`, atau isi langsung di `config/sso.php`) menamai koneksi persis seperti login lama: `igrjkt`, `simjkt`, `spibks` (SPI/ICM + PRODUCTION = kode saja), `simspibks`.
-
-> `dbPass` = password koneksi **terpilih**. Login lama selalu menyimpan password PRODUCTION walau memilih SIMULASI; IAM tidak mengirim password koneksi yang tidak dipilih.
-
-**`IasMenuMapper`** mengubah permission MENU menjadi `stdClass` `acc_id`, `acc_group`, `acc_subgroup1..3`, `acc_name`, `acc_url`.
-
-**`TbmasterUserMirror::upsert($connection, $kodeigr, $user)`** menulis mirror satu arah ke `tbmaster_user`:
-- **Tidak pernah menulis** `userpassword`, `encryptpwd`, `finger*`, `jabatan`, atau `station`.
-- `userlevel` hanya ditimpa bila IAM mengirim nilai.
-- User nonaktif ditandai `recordid = '1'`.
-
-**`AccessMigrasiCatalogSource`** adalah sumber katalog dari `tbmaster_access_migrasi`:
-- dedup `acc_id` dengan `acc_modify_dt` terbaru;
-- `acc_status '0'` = aktif;
-- `acc_url` `/administration/user` (Master User) dan `/administration/access` (akses menu per user) dilewati karena digantikan IAM. Menu Administration lain (Unlock IP, Menu, API Menu, dst.) tetap dikirim, lalu SYSTEM menentukan role yang boleh memakainya.
-
-### Commands
+## 5. Commands
 ```bash
-# Kirim katalog menu (config sso.permission_push.source = Sd1\IamSso\Ias\AccessMigrasiCatalogSource::class)
+# Kirim katalog menu (config sso.permission_push)
 php artisan sso:permission-push --connection=igrjkt --dry-run
 php artisan sso:permission-push --connection=igrjkt           # upsert
 php artisan sso:permission-push --connection=igrjkt --full    # + nonaktifkan kode yang tidak dikirim
 
-# Mirror user cabang dari IAM ke tbmaster_user (jadwalkan berkala)
+# Mirror user dari IAM ke tabel user lokal (config sso.mirror; jadwalkan berkala)
 php artisan sso:mirror-users --branch=01 --connection=igrjkt --connection=simjkt [--since=2026-09-29T00:00:00+07:00]
 ```
 
@@ -168,10 +167,30 @@ composer install && vendor/bin/phpunit                       # dengan Orchestra 
 SSO_TEST_APP=/path/app-laravel vendor/bin/phpunit -c /path/sso-client/phpunit.xml   # tanpa testbench: pakai aplikasi host
 php tools/php71-check.php                                    # cek sintaks/fungsi PHP 7.1 di src/
 ```
-31 test mencakup:
+46 test mencakup:
 - verifikasi JWT: tanda tangan palsu, `alg none`/HS256, kedaluwarsa, `aud`/`iss` salah, rotasi kunci;
 - `state` OAuth: salah dan replay;
 - alur `perm_version`: tidak berubah, berubah, user nonaktif, IAM mati, refresh token;
 - semantik `canUrl` dan filter tipe cabang;
 - adapter IAS dan mirror (password lama tidak tersentuh);
 - kedua command.
+
+## 7. Integrasi aplikasi baru vs existing (ringkas)
+
+| | Aplikasi baru (1 DB) | Aplikasi existing multi-cabang (mis. IAS) |
+|---|---|---|
+| IAM | daftar client, mapping role | + centang *Login multi-cabang* |
+| Kode | `Route::middleware('sso.auth')`, `Sso::user()`, `sso.can` | panggil middleware `sso.auth` dari middleware login lama; pakai `Sso::matchUrl()` di pengecekan menu lama |
+| Config | `.env` SSO_* | + `branch`, `bridge`, `mirror`, `permission_push` (salin dari `examples/`) |
+
+## 8. Migrasi dari v1
+
+| v1 (`Sd1\IamSso\Ias\*`) | v2 (config) |
+|---|---|
+| `IasSessionWriter`, `IasBranchSessionWriter`, `IasMenuMapper`, hook aplikasi | `sso.bridge` + hook bawaan `BridgeLoginHook` |
+| `IasConnectionNamer` | `sso.branch.connection_name = '{env_prefix}{kode}'` + `env_prefixes` + `connection_name_overrides` |
+| `TbmasterUserMirror` | `sso.mirror` (`Sd1\IamSso\Mirror\UserMirror`) |
+| `AccessMigrasiCatalogSource` | `sso.permission_push` (`Sd1\IamSso\Catalog\TableCatalogSource`) |
+| `sso.ias.*` | dihapus |
+
+Langkah: salin isi `examples/ias-sso.php` ke `config/sso.php` aplikasi, hapus hook aplikasi (mis. `SsoIasHook`) dan kosongkan `sso.hook` (pakai default), lalu `php artisan config:clear`.

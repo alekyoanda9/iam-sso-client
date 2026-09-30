@@ -5,8 +5,7 @@ namespace Sd1\IamSso\Tests\Feature;
 use Illuminate\Support\Facades\Route;
 use Sd1\IamSso\Branch\BranchContext;
 use Sd1\IamSso\Facades\Sso;
-use Sd1\IamSso\Ias\IasBranchSessionWriter;
-use Sd1\IamSso\Ias\IasConnectionNamer;
+use Sd1\IamSso\Branch\BranchConnectionRegistrar;
 use Sd1\IamSso\Tests\RecordingHook;
 use Sd1\IamSso\Tests\TestCase;
 
@@ -83,31 +82,35 @@ class BranchLoginTest extends TestCase
         $this->get('/t/db')->assertOk()->assertSee('10.9.50.10');
     }
 
-    public function test_ias_connection_namer_and_session_writer_follow_legacy_login(): void
+    private function useIasNaming(): void
     {
-        config(['sso.branch.connection_name' => IasConnectionNamer::class]);
+        $preset = require __DIR__ . '/../../examples/ias-sso.php';
+        config(['sso.branch' => array_merge(config('sso.branch'), $preset['branch'], ['enabled' => false])]);
+    }
+
+    public function test_pattern_connection_naming_follows_legacy_ias_names(): void
+    {
+        $this->useIasNaming();
         $this->loginWithBranch($this->branchPayload());
         $this->assertSame('spibks', Sso::connectionName(), 'SPI + PRODUCTION = kode saja');
         $this->assertSame('10.9.50.10', config('database.connections.spibks.host'));
 
-        $namer = new IasConnectionNamer();
-        $sim = new BranchContext($this->branchPayload(['env' => 'SIMULASI']));
-        $jkt = new BranchContext($this->branchPayload(['branch' => ['kode' => 'jkt', 'type' => 'IGR', 'name' => 'INDOGROSIR JAKARTA', 'code' => '01']]));
-        $this->assertSame('simspibks', $namer->name($sim));
-        $this->assertSame('igrjkt', $namer->name($jkt));
-        $this->assertSame('simjkt', IasConnectionNamer::legacyName('jkt', 'sim'));
+        $registrar = app(BranchConnectionRegistrar::class);
+        $name = function (array $override) use ($registrar) {
+            return $registrar->name(new BranchContext($this->branchPayload($override)));
+        };
+        $this->assertSame('simspibks', $name(['env' => 'SIMULASI']));
+        $this->assertSame('igrjkt', $name(['branch' => ['kode' => 'jkt', 'type' => 'IGR']]));
+        $this->assertSame('simjkt', $name(['branch' => ['kode' => 'jkt', 'type' => 'IGR'], 'env' => 'SIMULASI']));
+        $this->assertSame('icmxyz', $name(['branch' => ['kode' => 'icmxyz', 'type' => 'ICM']]));
 
-        $session = $this->app['session.store'];
-        (new IasBranchSessionWriter())->write($session, $jkt, 'igrjkt');
-        $this->assertSame('igrjkt', $session->get('connection'));
-        $this->assertSame('Jakarta', $session->get('namacabang'));
-        $this->assertSame(['jkt', '01', '10.1.50.1'], [$session->get('kode'), $session->get('kodeigr'), $session->get('phpIP')]);
-        $this->assertSame(['10.9.50.10', '10.8.50.10', '5432', 'pwd-50'], [$session->get('dbHostProd'), $session->get('dbHostSim'), $session->get('dbPort'), $session->get('dbPass')]);
+        config(['sso.branch.connection_name' => 'sso_branch']);
+        $this->assertSame('sso_branch', $name([]), 'nama tetap');
     }
 
     public function test_existing_config_for_same_db_is_kept(): void
     {
-        config(['sso.branch.connection_name' => IasConnectionNamer::class]);
+        $this->useIasNaming();
         // Provider koneksi lama IAS sudah mendaftarkan 'spibks' (dengan kunci tambahan 'ip').
         config(['database.connections.spibks' => ['driver' => 'pgsql', 'host' => '10.9.50.10', 'port' => '5432', 'database' => 'SPIBKS',
             'username' => 'spibks', 'password' => 'pwd-50', 'ip' => '10.1.50.1']]);
