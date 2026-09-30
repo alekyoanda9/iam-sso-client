@@ -44,12 +44,20 @@ return [
     |--------------------------------------------------------------------------
     | Sesi & penyegaran hak akses
     |--------------------------------------------------------------------------
+    | access_refresh        : true  -> hak akses/menu diperbarui TANPA logout: saat user membuka halaman
+    |                                  dan sudah >= version_check_seconds sejak cek terakhir, SDK memanggil
+    |                                  /api/me/access/version (user dinonaktifkan juga langsung terputus).
+    |                         false -> TIDAK ADA panggilan ke IAM selama sesi. Perubahan menu/role baru
+    |                                  berlaku setelah logout-login. User yang dinonaktifkan tetap bisa
+    |                                  bekerja sampai logout ATAU JWT identitasnya habis (IAM_JWT_TTL,
+    |                                  default 24 jam) - setelah itu wajib login ulang (dicek lokal).
     | version_check_seconds : jeda minimal antar cek /api/me/access/version (per sesi).
     | fail_open             : true  -> IAM tidak bisa dihubungi saat cek versi = pakai hak akses
     |                                  terakhir di sesi (login baru tetap butuh IAM).
     |                         false -> paksa login ulang.
     */
     'session_key' => 'sso',
+    'access_refresh' => (bool) env('SSO_ACCESS_REFRESH', true),
     'version_check_seconds' => (int) env('SSO_VERSION_CHECK_SECONDS', 60),
     'fail_open' => true,
 

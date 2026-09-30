@@ -86,6 +86,35 @@ class MiddlewareTest extends TestCase
         $this->assertStringEndsWith('/api/me/access/version', (string) $this->history[0]['request']->getUri());
     }
 
+    public function test_access_refresh_disabled_never_calls_iam(): void
+    {
+        config(['sso.access_refresh' => false]);
+        $this->mockIam([]);
+        $this->loginAs([], ['FO005']);
+        $calls = count($this->history);
+
+        $this->expire(); // sudah lewat 1 jam sejak cek terakhir
+        $this->get('/t/home')->assertOk();
+        $this->get('/fo/laporan-kasir/penjualan/detail')->assertOk();
+
+        $this->assertCount($calls, $this->history, 'tidak ada panggilan ke IAM selama sesi');
+        $this->assertNotContains(['refreshed', '2020000006', ['FO005']], RecordingHook::$calls);
+    }
+
+    public function test_access_refresh_disabled_forces_relogin_when_jwt_expired(): void
+    {
+        config(['sso.access_refresh' => false]);
+        $this->loginAs(['exp' => time() + 120]);
+        $calls = count($this->history);
+        $claims = Sso::session()->get('claims');
+        Sso::session()->put(['claims' => array_merge($claims, ['exp' => time() - 1])]);
+
+        $this->get('/t/home')->assertRedirect(route('sso.login'));
+        $this->assertFalse(Sso::check());
+        $this->assertSame(['logout'], end(RecordingHook::$calls));
+        $this->assertCount($calls, $this->history, 'dicek lokal, tanpa IAM');
+    }
+
     public function test_inactive_user_is_logged_out(): void
     {
         $this->loginAs();

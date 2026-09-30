@@ -280,6 +280,15 @@ class SsoManager
         }
         $session = $this->session();
         $now = time();
+
+        // access_refresh=false: tanpa panggilan ke IAM selama sesi. Satu-satunya batas adalah masa
+        // berlaku JWT identitas (dicek lokal); lewat itu -> login ulang.
+        if (isset($this->config['access_refresh']) && ! $this->config['access_refresh']) {
+            $claims = (array) $session->get('claims', []);
+
+            return isset($claims['exp']) && (int) $claims['exp'] <= $now ? self::STATUS_RELOGIN : self::STATUS_OK;
+        }
+
         if (! $force && $now - (int) $session->get('checked_at', 0) < (int) $this->config['version_check_seconds']) {
             return self::STATUS_OK;
         }

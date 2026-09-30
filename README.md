@@ -85,6 +85,7 @@ Route bawaan (prefix `sso`, middleware `web`):
 - **Versi berubah:** identitas (JWT) dan hak akses diambil ulang, lalu `onAccessRefreshed` dipanggil.
 - **`active=false`** (user nonaktif atau akses dicabut): `onLogout` dipanggil, sesi dihapus, dan user diarahkan ke login ulang.
 - **Access token kedaluwarsa:** diperbarui otomatis dengan refresh token. Kalau gagal, user diarahkan ke login ulang.
+- **Mematikan fitur ini** (`SSO_ACCESS_REFRESH=false`): tidak ada satu pun panggilan ke IAM selama sesi. Perubahan menu/role baru berlaku setelah logout lalu login lagi. User yang dinonaktifkan di IAM tetap bisa bekerja sampai ia logout atau JWT identitasnya habis (`IAM_JWT_TTL` di IAM, default 24 jam); setelah itu SDK memaksa login ulang (dicek lokal) dan login ulang ditolak IAM.
 - **IAM tidak bisa dihubungi saat pengecekan:** dengan `fail_open=true` (default), hak akses terakhir di sesi tetap dipakai dan pengecekan dicoba lagi sekitar 15 detik kemudian. Login baru tetap butuh IAM.
 
 ### Login multi-cabang (aplikasi yang terhubung ke DB tiap cabang)
