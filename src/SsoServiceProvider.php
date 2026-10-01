@@ -6,11 +6,7 @@ use GuzzleHttp\Client as GuzzleClient;
 use Illuminate\Routing\Router;
 use Illuminate\Support\Facades\Blade;
 use Illuminate\Support\ServiceProvider;
-use Sd1\IamSso\Bridge\SessionBridge;
-use Sd1\IamSso\Bridge\ValueResolver;
-use Sd1\IamSso\Catalog\TableCatalogSource;
 use Sd1\IamSso\Console\PermissionPushCommand;
-use Sd1\IamSso\Mirror\UserMirror;
 use Sd1\IamSso\Contracts\LoginHook;
 use Sd1\IamSso\Http\IamClient;
 use Sd1\IamSso\Http\Middleware\Authenticate;
@@ -58,19 +54,8 @@ class SsoServiceProvider extends ServiceProvider
         });
         $this->app->alias(SsoManager::class, 'sso');
 
-        $this->app->singleton(ValueResolver::class);
-        $this->app->bind(SessionBridge::class, function ($app) {
-            return new SessionBridge($app->make(SsoManager::class), $app['db'], $app->make(ValueResolver::class), (array) $app['config']->get('sso.bridge', []));
-        });
-        $this->app->bind(UserMirror::class, function ($app) {
-            return new UserMirror($app['db'], $app->make(ValueResolver::class), (array) $app['config']->get('sso.mirror', []));
-        });
-        $this->app->bind(TableCatalogSource::class, function ($app) {
-            return new TableCatalogSource($app['db'], (array) $app['config']->get('sso.permission_push', []));
-        });
-
         $this->app->bind(LoginHook::class, function ($app) {
-            return $app->make($app['config']->get('sso.hook'));
+            return $app->make($app['config']->get('sso.hook') ?: \Sd1\IamSso\Support\NullLoginHook::class);
         });
     }
 

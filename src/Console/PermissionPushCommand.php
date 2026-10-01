@@ -3,38 +3,33 @@
 namespace Sd1\IamSso\Console;
 
 use Illuminate\Console\Command;
+use Sd1\IamSso\Contracts\LoginHook;
 use Sd1\IamSso\Contracts\PermissionCatalogSource;
 use Sd1\IamSso\Http\IamClient;
 
 /**
  * Kirim katalog menu/aksi aplikasi ke IAM (client harus authz_mode MANAGED).
+ * Katalog diambil dari hook aplikasi (config sso.hook) yang mengimplementasikan PermissionCatalogSource.
  * IAM tidak pernah menghapus permission; --full hanya MENONAKTIFKAN kode yang tidak dikirim.
  */
 class PermissionPushCommand extends Command
 {
     protected $signature = 'sso:permission-push
-        {--connection= : koneksi DB sumber (dipakai sumber IAS: tbmaster_access_migrasi)}
+        {--connection= : koneksi DB sumber katalog (diteruskan ke hook)}
         {--full : nonaktifkan permission di IAM yang tidak ada di kiriman ini}
         {--dry-run : tampilkan saja, jangan kirim}';
 
     protected $description = 'Kirim katalog permission (menu/aksi) aplikasi ke IAM.';
 
-    public function handle(IamClient $client)
+    public function handle(IamClient $client, LoginHook $hook)
     {
-        $sourceClass = config('sso.permission_push.source');
-        if (! $sourceClass) {
-            $this->error('config sso.permission_push.source belum diisi.');
-
-            return 1;
-        }
-        $source = app($sourceClass);
-        if (! $source instanceof PermissionCatalogSource) {
-            $this->error($sourceClass . ' harus mengimplementasikan ' . PermissionCatalogSource::class);
+        if (! $hook instanceof PermissionCatalogSource) {
+            $this->error(get_class($hook) . ' (config sso.hook) belum mengimplementasikan ' . PermissionCatalogSource::class . '::items().');
 
             return 1;
         }
 
-        $items = $source->items(['connection' => $this->option('connection')]);
+        $items = $hook->items(['connection' => $this->option('connection')]);
         $active = count(array_filter($items, function ($i) {
             return ! array_key_exists('is_active', $i) || $i['is_active'];
         }));

@@ -3,36 +3,35 @@
 namespace Sd1\IamSso\Console;
 
 use Illuminate\Console\Command;
+use Sd1\IamSso\Contracts\LoginHook;
+use Sd1\IamSso\Contracts\UserMirrorHook;
 use Sd1\IamSso\Http\IamClient;
-use Sd1\IamSso\Mirror\UserMirror;
 
 /**
- * Sinkron berkala IAM -> tabel user lokal (satu arah, config sso.mirror).
+ * Sinkron berkala IAM -> tabel user lokal (satu arah). Penulisan ke tabel dilakukan hook aplikasi
+ * (config sso.hook) yang mengimplementasikan UserMirrorHook.
  *   php artisan sso:mirror-users --branch=01 --connection=igrjkt --connection=simjkt
  */
 class MirrorUsersCommand extends Command
 {
     protected $signature = 'sso:mirror-users
-        {--branch= : kode cabang (default config sso.mirror.branch)}
+        {--branch= : kode cabang}
         {--connection=* : koneksi DB tujuan (boleh berulang, mis. produksi & simulasi)}
         {--since= : hanya user yang berubah sejak waktu ini (ISO 8601)}';
 
     protected $description = 'Salin user cabang dari IAM ke tabel user lokal aplikasi (mirror baca-saja).';
 
-    public function handle(IamClient $client, UserMirror $mirror)
+    public function handle(IamClient $client, LoginHook $hook)
     {
-        if (! $mirror->enabled()) {
-            $this->error('Mirror belum diaktifkan: isi config sso.mirror (enabled + table).');
+        if (! $hook instanceof UserMirrorHook) {
+            $this->error(get_class($hook) . ' (config sso.hook) belum mengimplementasikan ' . UserMirrorHook::class . '::mirrorUser().');
 
             return 1;
         }
-        $branch = $this->option('branch') ?: config('sso.mirror.branch');
+        $branch = (string) $this->option('branch');
         $connections = array_filter((array) $this->option('connection'));
-        if (! $connections && config('sso.mirror.connection')) {
-            $connections = [config('sso.mirror.connection')];
-        }
-        if (! $branch || ! $connections) {
-            $this->error('Wajib: --branch=<kode> (atau config sso.mirror.branch) dan minimal satu --connection=<nama>.');
+        if ($branch === '' || ! $connections) {
+            $this->error('Wajib: --branch=<kode> dan minimal satu --connection=<nama>.');
 
             return 1;
         }
@@ -43,7 +42,8 @@ class MirrorUsersCommand extends Command
         foreach ($connections as $conn) {
             $count = ['inserted' => 0, 'updated' => 0, 'skipped' => 0];
             foreach ($users as $u) {
-                $count[$mirror->upsert($conn, $branch, $u)]++;
+                $result = $hook->mirrorUser($conn, $branch, $u);
+                $count[isset($count[$result]) ? $result : 'skipped']++;
             }
             $this->info(sprintf('[%s] %d user: %d baru, %d diperbarui, %d dilewati.', $conn, count($users), $count['inserted'], $count['updated'], $count['skipped']));
         }

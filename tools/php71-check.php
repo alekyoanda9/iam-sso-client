@@ -55,7 +55,7 @@ $visitor = new class($issues, $newFunctions, $badTypes) extends NodeVisitorAbstr
 };
 
 $parser = (new ParserFactory())->createForNewestSupportedVersion();
-$dirs = array_slice($argv, 2) ?: [__DIR__ . '/../src', __DIR__ . '/../routes', __DIR__ . '/../config'];
+$dirs = array_slice($argv, 2) ?: [__DIR__ . '/../src', __DIR__ . '/../routes', __DIR__ . '/../config', __DIR__ . '/../examples'];
 $count = 0;
 foreach ($dirs as $dir) {
     $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($dir));

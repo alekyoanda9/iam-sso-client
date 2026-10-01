@@ -56,7 +56,7 @@ abstract class TestCase extends BaseTestCase
         ]);
         // Pakai default paket (aplikasi host bisa punya config/sso.php sendiri).
         $defaults = require __DIR__ . '/../config/sso.php';
-        foreach (['enabled', 'disabled_redirect', 'access_refresh', 'branch', 'bridge', 'mirror', 'permission_push'] as $key) {
+        foreach (['enabled', 'disabled_redirect', 'access_refresh'] as $key) {
             config(['sso.' . $key => $defaults[$key]]);
         }
         RecordingHook::$calls = [];

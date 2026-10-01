@@ -9,6 +9,8 @@ use Sd1\IamSso\Branch\BranchConnectionRegistrar;
 use Sd1\IamSso\Tests\RecordingHook;
 use Sd1\IamSso\Tests\TestCase;
 
+require_once __DIR__ . '/../../examples/IasSsoHook.php';
+
 /**
  * Login multi-cabang: IAM menambahkan iam_ctx di callback, SDK menukarnya di
  * /api/me/branch-context lalu mendaftarkan koneksi DB cabang.
@@ -84,11 +86,10 @@ class BranchLoginTest extends TestCase
 
     private function useIasNaming(): void
     {
-        $preset = require __DIR__ . '/../../examples/ias-sso.php';
-        config(['sso.branch' => array_merge(config('sso.branch'), $preset['branch'], ['enabled' => false])]);
+        config(['sso.hook' => IasNamingOnlyHook::class]);
     }
 
-    public function test_pattern_connection_naming_follows_legacy_ias_names(): void
+    public function test_hook_connection_naming_follows_legacy_ias_names(): void
     {
         $this->useIasNaming();
         $this->loginWithBranch($this->branchPayload());
@@ -104,8 +105,16 @@ class BranchLoginTest extends TestCase
         $this->assertSame('simjkt', $name(['branch' => ['kode' => 'jkt', 'type' => 'IGR'], 'env' => 'SIMULASI']));
         $this->assertSame('icmxyz', $name(['branch' => ['kode' => 'icmxyz', 'type' => 'ICM']]));
 
-        config(['sso.branch.connection_name' => 'sso_branch']);
-        $this->assertSame('sso_branch', $name([]), 'nama tetap');
+        config(['sso.hook' => RecordingHook::class]);
+        $this->assertSame('sso_branch', $name([]), 'hook tanpa BranchHook -> nama default');
+    }
+
+    public function test_hook_can_add_connection_options(): void
+    {
+        config(['sso.hook' => OptionsHook::class]);
+        $this->loginWithBranch($this->branchPayload());
+        $this->assertSame('db_cabang', Sso::connectionName());
+        $this->assertSame('prefer', config('database.connections.db_cabang.sslmode'));
     }
 
     public function test_existing_config_for_same_db_is_kept(): void
@@ -122,7 +131,7 @@ class BranchLoginTest extends TestCase
 
     public function test_required_branch_login_without_ctx_fails(): void
     {
-        config(['sso.branch.enabled' => true]);
+        config(['sso.hook' => OptionsHook::class]);
 
         $this->loginWithBranch($this->branchPayload(), null)->assertRedirect(route('sso.error'));
         $this->assertFalse(Sso::check());
@@ -142,5 +151,32 @@ class BranchLoginTest extends TestCase
         $this->loginWithBranch([])->assertRedirect(route('sso.error'));
         $this->assertFalse(Sso::check());
         $this->assertStringContainsString('sudah dipakai atau kedaluwarsa', session('sso_error'));
+    }
+}
+
+/** Hook contoh IAS tanpa onLogin (test ini hanya menguji penamaan koneksi). */
+class IasNamingOnlyHook extends \App\Sso\IasSsoHook
+{
+    public function onLogin(\Sd1\IamSso\SsoUser $user, \Sd1\IamSso\Access\PermissionSet $permissions, \Illuminate\Http\Request $request)
+    {
+        return null;
+    }
+}
+
+class OptionsHook extends \Sd1\IamSso\Support\BaseHook
+{
+    public function requiresBranch(): bool
+    {
+        return true;
+    }
+
+    public function connectionName(BranchContext $branch): string
+    {
+        return 'db_cabang';
+    }
+
+    public function connectionConfig(BranchContext $branch, array $default): array
+    {
+        return $default + ['sslmode' => 'prefer'];
     }
 }

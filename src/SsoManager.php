@@ -167,7 +167,7 @@ class SsoManager
         return $this->branchCache = is_array($data) ? new BranchContext($data) : null;
     }
 
-    /** Nama koneksi DB Laravel cabang terpilih (config sso.branch.connection_name), atau null. */
+    /** Nama koneksi DB Laravel cabang terpilih (BranchHook::connectionName), atau null. */
     public function connectionName()
     {
         $branch = $this->branch();
@@ -240,7 +240,8 @@ class SsoManager
      */
     private function fetchBranch(string $accessToken, ?string $ctx)
     {
-        $required = ! empty($this->config['branch']['enabled']);
+        $hook = app(\Sd1\IamSso\Contracts\LoginHook::class);
+        $required = $hook instanceof \Sd1\IamSso\Contracts\BranchHook && $hook->requiresBranch();
         if ($ctx === null || $ctx === '') {
             if ($required) {
                 throw new SsoException('IAM tidak mengirim pilihan cabang. Pastikan client ini ber-flag "Login multi-cabang" di IAM (App Management).');

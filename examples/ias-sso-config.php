@@ -1,5 +1,10 @@
 <?php
 
+/*
+ * Contoh config/sso.php untuk Web IAS (SDK v3): hanya koneksi ke IAM + nama kelas hook.
+ * Semua perilaku khusus IAS ada di examples/IasSsoHook.php (salin ke app/Sso/IasSsoHook.php).
+ */
+
 return [
 
     /*
@@ -12,9 +17,10 @@ return [
     | redirect_uri  : kosongkan -> otomatis route('sso.callback') di host yang sedang diakses.
     |                 URL ini HARUS persis terdaftar di IAM (iam:client-redirects).
     */
-    // false -> /sso/login & /sso/callback menolak (mis. server masih memakai login lama).
-    'enabled' => (bool) env('SSO_ENABLED', true),
-    'disabled_redirect' => null, // null = url('/login')
+    // SSO hanya ditawarkan bila AUTH_MODE = hybrid / sso (config/ias_auth.php).
+    // legacy -> /sso/login menolak dan kembali ke /login.
+    'enabled' => strtolower((string) env('AUTH_MODE', 'legacy')) !== 'legacy',
+    'disabled_redirect' => null,
 
     'base_url' => env('SSO_BASE_URL'),
     'client_id' => env('SSO_CLIENT_ID'),
@@ -48,20 +54,15 @@ return [
     |--------------------------------------------------------------------------
     | Sesi & penyegaran hak akses
     |--------------------------------------------------------------------------
-    | access_refresh        : true  -> hak akses/menu diperbarui TANPA logout: saat user membuka halaman
-    |                                  dan sudah >= version_check_seconds sejak cek terakhir, SDK memanggil
-    |                                  /api/me/access/version (user dinonaktifkan juga langsung terputus).
-    |                         false -> TIDAK ADA panggilan ke IAM selama sesi. Perubahan menu/role baru
-    |                                  berlaku setelah logout-login. User yang dinonaktifkan tetap bisa
-    |                                  bekerja sampai logout ATAU JWT identitasnya habis (IAM_JWT_TTL,
-    |                                  default 24 jam) - setelah itu wajib login ulang (dicek lokal).
     | version_check_seconds : jeda minimal antar cek /api/me/access/version (per sesi).
     | fail_open             : true  -> IAM tidak bisa dihubungi saat cek versi = pakai hak akses
     |                                  terakhir di sesi (login baru tetap butuh IAM).
     |                         false -> paksa login ulang.
     */
     'session_key' => 'sso',
-    'access_refresh' => (bool) env('SSO_ACCESS_REFRESH', true),
+    // IAS: tanpa panggilan ke IAM selama sesi; perubahan menu/role berlaku setelah logout-login.
+    // User nonaktif terputus saat logout atau JWT habis (IAM_JWT_TTL). true = perbarui tanpa logout.
+    'access_refresh' => (bool) env('SSO_ACCESS_REFRESH', false),
     'version_check_seconds' => (int) env('SSO_VERSION_CHECK_SECONDS', 60),
     'fail_open' => true,
 
@@ -85,15 +86,11 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Hook aplikasi
+    | Hook IAS
     |--------------------------------------------------------------------------
-    | Satu kelas PHP di aplikasi (turunan Sd1\IamSso\Support\BaseHook) yang berisi semua
-    | perilaku khusus aplikasi, ditulis sebagai kode biasa - BUKAN di config ini:
-    |   onLogin / onAccessRefreshed / onLogout   isi & bersihkan sesi lama aplikasi, query DB, dsb.
-    |   requiresBranch / connectionName / connectionConfig   login multi-cabang (Contracts\BranchHook)
-    |   items()        katalog menu untuk sso:permission-push (Contracts\PermissionCatalogSource)
-    |   mirrorUser()   tulis user ke tabel user lokal untuk sso:mirror-users (Contracts\UserMirrorHook)
-    | Default: NullLoginHook (tidak melakukan apa-apa; koneksi cabang bernama 'sso_branch').
+    | Semua perilaku khusus IAS (isi Session lama, nama koneksi cabang igrjkt/simjkt/spibks,
+    | query tbmaster_perusahaan, mirror tbmaster_user, katalog tbmaster_access_migrasi)
+    | ditulis sebagai kode di app/Sso/IasSsoHook.php, bukan di config ini.
     */
-    'hook' => Sd1\IamSso\Support\NullLoginHook::class,
+    'hook' => App\Sso\IasSsoHook::class,
 ];

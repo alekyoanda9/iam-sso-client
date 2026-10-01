@@ -3,7 +3,8 @@
 namespace Sd1\IamSso\Contracts;
 
 /**
- * Sumber katalog menu/aksi aplikasi untuk sso:permission-push.
+ * Opsional, diimplementasikan oleh hook aplikasi (config sso.hook): sumber katalog menu/aksi
+ * untuk `php artisan sso:permission-push`.
  */
 interface PermissionCatalogSource
 {

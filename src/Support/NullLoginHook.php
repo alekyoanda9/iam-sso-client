@@ -2,24 +2,7 @@
 
 namespace Sd1\IamSso\Support;
 
-use Illuminate\Http\Request;
-use Sd1\IamSso\Access\PermissionSet;
-use Sd1\IamSso\Contracts\LoginHook;
-use Sd1\IamSso\SsoUser;
-
-class NullLoginHook implements LoginHook
+/** Hook default: tidak ada sesi lama yang diisi, koneksi cabang bernama 'sso_branch'. */
+class NullLoginHook extends BaseHook
 {
-    public function onLogin(SsoUser $user, PermissionSet $permissions, Request $request)
-    {
-        return null;
-    }
-
-    public function onAccessRefreshed(SsoUser $user, PermissionSet $permissions, Request $request)
-    {
-        return null;
-    }
-
-    public function onLogout(Request $request)
-    {
-    }
 }
